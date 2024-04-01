@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 import torch
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve, recall_score, f1_score
 
 
 def eval_edge_prediction(model, negative_edge_sampler, data, n_neighbors, batch_size=200):
@@ -72,5 +72,15 @@ def eval_node_classification(tgn, decoder, data, edge_idxs, batch_size, n_neighb
       pred_prob_batch = decoder(source_embedding).sigmoid()
       pred_prob[s_idx: e_idx] = pred_prob_batch.cpu().numpy()
 
+  fpr, tpr, thresholds = roc_curve(data.labels, pred_prob)
+  # auc_score = auc(fpr, tpr)
+  # 找到最佳阈值对应的索引
+  optimal_idx = np.argmax(tpr - fpr)
+  optimal_threshold = thresholds[optimal_idx]
+  pred_labels = pred_prob > optimal_threshold
+  # auc = roc_auc_score(labels_mat, probs_mat[:, 1])
+  f1 = f1_score(data.labels, pred_labels)
+  recall = recall_score(data.labels, pred_labels)
+  ap = average_precision_score(data.labels, pred_prob)
   auc_roc = roc_auc_score(data.labels, pred_prob)
-  return auc_roc
+  return (auc_roc, ap, f1, recall)

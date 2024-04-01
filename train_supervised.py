@@ -130,6 +130,9 @@ device = torch.device(device_string)
 mean_time_shift_src, std_time_shift_src, mean_time_shift_dst, std_time_shift_dst = \
   compute_time_statistics(full_data.sources, full_data.destinations, full_data.timestamps)
 
+
+# Run Loop
+best_metric_l = []
 for i in range(args.n_runs):
   results_path = "results/{}_node_classification_{}.pkl".format(args.prefix,
                                                                 i) if i > 0 else "results/{}_node_classification.pkl".format(
@@ -171,10 +174,12 @@ for i in range(args.n_runs):
   decoder = decoder.to(device)
   decoder_loss_criterion = torch.nn.BCELoss()
 
-  val_aucs = []
-  train_losses = []
+  val_auc_l = []
+  train_loss_l = []
 
   early_stopper = EarlyStopMonitor(max_round=args.patience)
+  
+  # Epoch Loop
   for epoch in range(args.n_epoch):
     start_epoch = time.time()
     
@@ -186,6 +191,7 @@ for i in range(args.n_runs):
     decoder = decoder.train()
     loss = 0
     
+    # Batch Loop
     for k in range(num_batch):
       s_idx = k * BATCH_SIZE
       e_idx = min(num_instance, s_idx + BATCH_SIZE)
@@ -213,28 +219,30 @@ for i in range(args.n_runs):
       decoder_loss.backward()
       decoder_optimizer.step()
       loss += decoder_loss.item()
-    train_losses.append(loss / num_batch)
+    # End Batch Loop
+    train_loss_l.append(loss / num_batch)
 
-    val_auc = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
-                                       n_neighbors=NUM_NEIGHBORS)
-    val_aucs.append(val_auc)
+    val_metric = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
+                                          n_neighbors=NUM_NEIGHBORS)
+    val_auc = val_metric[0]
+    val_auc_l.append(val_auc)
 
     pickle.dump({
-      "val_aps": val_aucs,
-      "train_losses": train_losses,
+      "val_aps": val_auc_l,
+      "train_losses": train_loss_l,
       "epoch_times": [0.0],
       "new_nodes_val_aps": [],
     }, open(results_path, "wb"))
 
-    logger.info(f'Epoch {epoch}: train loss: {loss / num_batch}, val auc: {val_auc}, time: {time.time() - start_epoch}')
-  
-  if args.use_validation:
-    if early_stopper.early_stop_check(val_auc):
-      logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
-      break
-    else:
-      torch.save(decoder.state_dict(), get_checkpoint_path(epoch))
+    logger.info(f'Epoch {epoch}: train loss: {(loss/num_batch):.4f}, val auc: {val_auc:.4f}, time: {(time.time() - start_epoch):.4f}')
 
+    # if args.use_validation:
+    #   if early_stopper.early_stop_check(val_auc):
+    #     logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
+    #     break
+    #   else:
+    #     torch.save(decoder.state_dict(), get_checkpoint_path(epoch))
+  # End Epoch Loop
   if args.use_validation:
     logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
     best_model_path = get_checkpoint_path(early_stopper.best_epoch)
@@ -242,20 +250,44 @@ for i in range(args.n_runs):
     logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
     decoder.eval()
 
-    test_auc = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
+    test_metric = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
                                         n_neighbors=NUM_NEIGHBORS)
+    test_auc = test_metric[0]
+    best_metric_l.append(test_metric)
   else:
     # If we are not using a validation set, the test performance is just the performance computed
     # in the last epoch
-    test_auc = val_aucs[-1]
+    test_auc = val_auc_l[-1]
     
   pickle.dump({
-    "val_aps": val_aucs,
+    "val_aps": val_auc_l,
     "test_ap": test_auc,
-    "train_losses": train_losses,
+    "train_losses": train_loss_l,
     "epoch_times": [0.0],
     "new_nodes_val_aps": [],
     "new_node_test_ap": 0,
   }, open(results_path, "wb"))
+  logger.info(f'\n =========================== RUN {i} END ==================================')
+  if args.use_validation:
+    logger.info(f'test_auc: {test_metric[0]:.4f}, test_ap: {test_metric[1]:.4f}, test_f1: {test_metric[2]:.4f}, test_recall: {test_metric[3]:.4f}')
+  else:
+    logger.info(f'test_auc: {test_auc:.4f}')
+# End Run Loop
 
-  logger.info(f'test auc: {test_auc}')
+
+if args.use_validation:
+  logger.info(f'\n =========================== SUMMARY ==================================')
+  for i in range(len(best_metric_l)):
+    best_metric = best_metric_l[i]
+    logger.info(f'RUN #{i} -- auc: {best_metric[0]}, ap: {best_metric[1]}, f1: {best_metric[2]}, ' + \
+                f'recall: {best_metric[3]}')
+
+  logger.info(f'ALL IN ALL -- ave_auc: {round(sum([x[0] for x in best_metric_l])/ args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[0] for x in best_metric_l]), 4)}')
+  logger.info(f'ALL IN ALL -- ave_ap: {round(sum([x[1] for x in best_metric_l])/ args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[1] for x in best_metric_l]), 4)}')
+  logger.info(f'ALL IN ALL -- ave_f1: {round(sum([x[2] for x in best_metric_l])/ args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[2] for x in best_metric_l]), 4)}')
+  logger.info(f'ALL IN ALL -- ave_recall: {round(sum([x[3] for x in best_metric_l])/ args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[3] for x in best_metric_l]), 4)}')
+  

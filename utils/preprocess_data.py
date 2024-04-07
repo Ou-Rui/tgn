@@ -77,11 +77,16 @@ def run(data_name, bipartite=True):
   np.save(OUT_FEAT, feat)
   np.save(OUT_NODE_FEAT, rand_feat)
 
-parser = argparse.ArgumentParser('Interface for TGN data preprocessing')
-parser.add_argument('--data', type=str, help='Dataset name (eg. wikipedia or reddit)',
-                    default='wikipedia')
-parser.add_argument('--bipartite', action='store_true', help='Whether the graph is bipartite')
+# parser = argparse.ArgumentParser('Interface for TGN data preprocessing')
+# parser.add_argument('--data', type=str, help='Dataset name (eg. wikipedia or reddit)',
+#                     default='wikipedia')
+# parser.add_argument('--bipartite', action='store_true', help='Whether the graph is bipartite')
 
-args = parser.parse_args()
+# args = parser.parse_args()
 
-run(args.data, bipartite=args.bipartite)
+# run(args.data, bipartite=args.bipartite)
+
+nfeat = np.load('./data/ml_txn_filter_node.npy')
+new_nfeat = rand_feat = np.zeros((nfeat.shape[0], 172))
+np.save('./data/ml_txn_filter_node.npy', new_nfeat)
+

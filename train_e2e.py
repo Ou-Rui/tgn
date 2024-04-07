@@ -1,3 +1,9 @@
+"""
+python train_e2e.py --use_memory --prefix e2e -d wikipedia
+python train_e2e.py --use_memory  --gpu 2 --prefix e2e -d reddit
+python train_e2e.py --use_memory --prefix e2e -d mooc
+python train_e2e.py --use_memory --prefix e2e -d txn_filter
+"""
 import math
 import logging
 import time
@@ -24,14 +30,14 @@ parser = argparse.ArgumentParser('TGN self-supervised training')
 parser.add_argument('-d', '--data', type=str, help='Dataset name (eg. wikipedia or reddit)',
                     default='wikipedia')
 parser.add_argument('--bs', type=int, default=100, help='Batch_size')
-parser.add_argument('--prefix', type=str, default='', help='Prefix to name the checkpoints')
+parser.add_argument('--prefix', type=str, default='e2e', help='Prefix to name the checkpoints')
 parser.add_argument('--n_degree', type=int, default=10, help='Number of neighbors to sample')
 parser.add_argument('--n_head', type=int, default=2, help='Number of heads used in attention layer')
 parser.add_argument('--n_epoch', type=int, default=10, help='Number of epochs')
 parser.add_argument('--n_layer', type=int, default=1, help='Number of network layers')
 parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
 parser.add_argument('--patience', type=int, default=5, help='Patience for early stopping')
-parser.add_argument('--n_runs', type=int, default=1, help='Number of runs')
+parser.add_argument('--n_runs', type=int, default=10, help='Number of runs')
 parser.add_argument('--drop_out', type=float, default=0.1, help='Dropout probability')
 parser.add_argument('--gpu', type=int, default=0, help='Idx for the gpu to use')
 parser.add_argument('--node_dim', type=int, default=100, help='Dimensions of the node embedding')
@@ -61,10 +67,6 @@ parser.add_argument('--use_destination_embedding_in_message', action='store_true
                     help='Whether to use the embedding of the destination node as part of the message')
 parser.add_argument('--use_source_embedding_in_message', action='store_true',
                     help='Whether to use the embedding of the source node as part of the message')
-parser.add_argument('--n_neg', type=int, default=1)
-parser.add_argument('--use_validation', action='store_true',
-                    help='Whether to use a validation set')
-parser.add_argument('--new_node', action='store_true', help='model new node')
 
 try:
   args = parser.parse_args()
@@ -80,7 +82,7 @@ NUM_HEADS = args.n_head
 DROP_OUT = args.drop_out
 GPU = args.gpu
 UNIFORM = args.uniform
-NEW_NODE = args.new_node
+# NEW_NODE = args.new_node
 SEQ_LEN = NUM_NEIGHBORS
 DATA = args.data
 NUM_LAYER = args.n_layer
@@ -95,10 +97,10 @@ MEMORY_DIM = args.memory_dim
 Path("./saved_models/").mkdir(parents=True, exist_ok=True)
 Path("./saved_checkpoints/").mkdir(parents=True, exist_ok=True)
 MODEL_SAVE_PATH = f'./saved_models/{args.prefix}-{args.data}' + '\
-  node-classification.pth'
+  e2e.pth'
 get_checkpoint_path = lambda \
     epoch: f'./saved_checkpoints/{args.prefix}-{args.data}-{epoch}' + '\
-  node-classification.pth'
+  e2e.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -116,7 +118,7 @@ logger.addHandler(ch)
 logger.info(args)
 
 full_data, node_features, edge_features, train_data, val_data, test_data = \
-  get_data_node_classification(DATA, use_validation=args.use_validation)
+  get_data_node_classification(DATA, use_validation=True)
 
 max_idx = max(full_data.unique_nodes)
 
@@ -137,10 +139,9 @@ best_epoch_l = []
 best_val_metric_l = []
 best_test_metric_l = []
 max_test_metric_l = []
-for i in range(args.n_runs):
-  results_path = "results/{}_node_classification_{}.pkl".format(args.prefix,
-                                                                i) if i > 0 else "results/{}_node_classification.pkl".format(
-    args.prefix)
+for i_run in range(args.n_runs):
+  results_path = "results/{}_e2e_{}.pkl" \
+      .format(args.prefix, i_run) if i_run > 0 else "results/{}_e2e.pkl".format(args.prefix)
   Path("results/").mkdir(parents=True, exist_ok=True)
 
   # Initialize Model
@@ -163,15 +164,15 @@ for i in range(args.n_runs):
   num_instance = len(train_data.sources)
   num_batch = math.ceil(num_instance / BATCH_SIZE)
   
-  logger.info('Num of training instances: {}'.format(num_instance))
-  logger.info('Num of batches per epoch: {}'.format(num_batch))
+  logger.debug('Num of training instances: {}'.format(num_instance))
+  logger.debug('Num of batches per epoch: {}'.format(num_batch))
 
-  logger.info('Loading saved TGN model')
-  model_path = f'./saved_models/{args.prefix}-{DATA}.pth'
-  tgn.load_state_dict(torch.load(model_path))
-  tgn.eval()
-  logger.info('TGN models loaded')
-  logger.info('Start training node classification task')
+  # logger.info('Loading saved TGN model')
+  # model_path = f'./saved_models/{args.prefix}-{DATA}.pth'
+  # tgn.load_state_dict(torch.load(model_path))
+  # tgn.eval()
+  # logger.info('TGN models loaded')
+  # logger.info('Start training node classification task')
 
   decoder = MLP(node_features.shape[1], drop=DROP_OUT)
   decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=args.lr)
@@ -195,7 +196,7 @@ for i in range(args.n_runs):
     if USE_MEMORY:
       tgn.memory.__init_memory__()
 
-    tgn = tgn.eval()
+    tgn = tgn.train()
     decoder = decoder.train()
     loss = 0
     
@@ -214,12 +215,9 @@ for i in range(args.n_runs):
 
       decoder_optimizer.zero_grad()
       with torch.no_grad():
-        source_embedding, destination_embedding, _ = tgn.compute_temporal_embeddings(sources_batch,
-                                                                                     destinations_batch,
-                                                                                     destinations_batch,
-                                                                                     timestamps_batch,
-                                                                                     edge_idxs_batch,
-                                                                                     NUM_NEIGHBORS)
+        source_embedding, destination_embedding, _ = \
+            tgn.compute_temporal_embeddings(sources_batch, destinations_batch, destinations_batch,
+                                            timestamps_batch, edge_idxs_batch, NUM_NEIGHBORS)
 
       labels_batch_torch = torch.from_numpy(labels_batch).float().to(device)
       pred = decoder(source_embedding).sigmoid()
@@ -233,7 +231,7 @@ for i in range(args.n_runs):
     val_metric = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
                                           n_neighbors=NUM_NEIGHBORS)
     test_metric = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
-                                        n_neighbors=NUM_NEIGHBORS)
+                                           n_neighbors=NUM_NEIGHBORS)
     for i in range(len(METRICS)):
       if val_metric[i] > best_val_metric[i]:
         best_val_metric[i] = val_metric[i]
@@ -255,25 +253,14 @@ for i in range(args.n_runs):
     logger.info(f'Epoch {epoch}: train_loss: {(loss/num_batch):.4f}, val_auc: {val_auc:.4f}, ' + \
                 f'test_auc: {test_auc:.4f}, time: {(time.time() - start_epoch):.4f}')
 
-    # if args.use_validation:
-    #   if early_stopper.early_stop_check(val_auc):
-    #     logger.info('No improvement over {} epochs, stop training'.format(early_stopper.max_round))
-    #     break
-    #   else:
-    #     torch.save(decoder.state_dict(), get_checkpoint_path(epoch))
-  # End Epoch Loop
-  if args.use_validation:
-    for i in range(len(METRICS)):
-      logger.info(f'{METRICS[i]}: best_epoch={best_epoch[i]}, val_{METRICS[i]}={best_val_metric[i]:.4f}, ' + \
-                    f'test_{METRICS[i]}={best_test_metric[i]:.4f}, max_test_{METRICS[i]}={max_test_metric[i]:.4f}')
-    best_epoch_l.append(best_epoch)
-    best_val_metric_l.append(best_val_metric)
-    best_test_metric_l.append(best_test_metric)
-    max_test_metric_l.append(max_test_metric)
-  else:
-    # If we are not using a validation set, the test performance is just the performance computed
-    # in the last epoch
-    test_auc = val_auc_l[-1]
+  for i in range(len(METRICS)):
+    logger.debug(f'{METRICS[i]}: best_epoch={best_epoch[i]}, val_{METRICS[i]}={best_val_metric[i]:.4f}, ' + \
+                  f'test_{METRICS[i]}={best_test_metric[i]:.4f}, max_test_{METRICS[i]}={max_test_metric[i]:.4f}')
+  best_epoch_l.append(best_epoch)
+  best_val_metric_l.append(best_val_metric)
+  best_test_metric_l.append(best_test_metric)
+  max_test_metric_l.append(max_test_metric)
+  
   pickle.dump({
     "val_aps": val_auc_l,
     "test_ap": test_auc,
@@ -282,26 +269,21 @@ for i in range(args.n_runs):
     "new_nodes_val_aps": [],
     "new_node_test_ap": 0,
   }, open(results_path, "wb"))
-  logger.info(f'\n =========================== RUN {i} END ==================================')
-  if args.use_validation:
-    logger.info(f'test_auc: {test_metric[0]:.4f}, test_ap: {test_metric[1]:.4f}, test_f1: {test_metric[2]:.4f}, test_recall: {test_metric[3]:.4f}')
-  else:
-    logger.info(f'test_auc: {test_auc:.4f}')
+  logger.info(f'\n =========================== RUN {i_run} END ==================================')
+  logger.info(f'test_auc: {test_metric[0]:.4f}, test_ap: {test_metric[1]:.4f}, test_f1: {test_metric[2]:.4f}, test_recall: {test_metric[3]:.4f}')
 # End Run Loop
 
-
-if args.use_validation:
-  logger.info(f'\n =========================== SUMMARY ==================================')
-  for i in range(len(METRICS)):
-    logger.info(f'<<< {METRICS[i]} >>>')
-    for i_run in range(args.n_runs):
-      logger.info(f'RUN #{i_run}: best_epoch={best_epoch_l[i_run][i]}, best_val_{METRICS[i]}={best_val_metric_l[i_run][i]:.4f}, ' + \
-                  f'best_test_{best_test_metric_l[i_run][i]:.4f}, max_test_{METRICS[i]}={max_test_metric_l[i_run][i]:.4f}')
-    
-    logger.info(f'ALL IN ALL -- ave_best_epoch: {round(sum(best_epoch_l[:][i])/args.n_runs, 4)}')
-    logger.info(f'ALL IN ALL -- ave_best_val_{METRICS[i]}: {round(sum([x[i] for x in best_val_metric_l])/args.n_runs, 4)}')
-    logger.info(f'ALL IN ALL -- ave_best_test_{METRICS[i]}: {round(sum([x[i] for x in best_test_metric_l])/args.n_runs, 4)}' + \
-                f' \u00B1 {round(np.std([x[i] for x in best_test_metric_l]), 4)}')
-    logger.info(f'ALL IN ALL -- ave_max_test_{METRICS[i]}: {round(sum([x[i] for x in max_test_metric_l])/args.n_runs, 4)}' + \
-                f' \u00B1 {round(np.std([x[i] for x in max_test_metric_l]), 4)}')
+logger.info(f'\n =========================== SUMMARY ==================================')
+for i in range(len(METRICS)):
+  logger.debug(f'<<< {METRICS[i]} >>>')
+  for i_run in range(args.n_runs):
+    logger.debug(f'RUN #{i_run}: best_epoch={best_epoch_l[i_run][i]}, best_val_{METRICS[i]}={best_val_metric_l[i_run][i]:.4f}, ' + \
+                f'best_test_{best_test_metric_l[i_run][i]:.4f}, max_test_{METRICS[i]}={max_test_metric_l[i_run][i]:.4f}')
+  
+  logger.debug(f'ALL IN ALL -- ave_best_epoch: {round(sum(best_epoch_l[:][i])/args.n_runs, 4)}')
+  logger.debug(f'ALL IN ALL -- ave_best_val_{METRICS[i]}: {round(sum([x[i] for x in best_val_metric_l])/args.n_runs, 4)}')
+  logger.debug(f'ALL IN ALL -- ave_best_test_{METRICS[i]}: {round(sum([x[i] for x in best_test_metric_l])/args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[i] for x in best_test_metric_l]), 4)}')
+  logger.debug(f'ALL IN ALL -- ave_max_test_{METRICS[i]}: {round(sum([x[i] for x in max_test_metric_l])/args.n_runs, 4)}' + \
+              f' \u00B1 {round(np.std([x[i] for x in max_test_metric_l]), 4)}')
   

@@ -48,6 +48,9 @@ def eval_edge_prediction(model, negative_edge_sampler, data, n_neighbors, batch_
 
 def eval_node_classification(tgn, decoder, data, edge_idxs, batch_size, n_neighbors):
   pred_prob = np.zeros(len(data.sources))
+  emb_l = np.zeros((len(data.sources), tgn.n_node_features))
+  h1_l = np.zeros((len(data.sources), 80))
+  h2_l = np.zeros((len(data.sources), 10))
   num_instance = len(data.sources)
   num_batch = math.ceil(num_instance / batch_size)
 
@@ -69,8 +72,12 @@ def eval_node_classification(tgn, decoder, data, edge_idxs, batch_size, n_neighb
                                                                                    timestamps_batch,
                                                                                    edge_idxs_batch,
                                                                                    n_neighbors)
-      pred_prob_batch = decoder(source_embedding).sigmoid()
+      pred_prob_batch, h1_batch, h2_batch = decoder(source_embedding)
+      pred_prob_batch = pred_prob_batch.sigmoid()
       pred_prob[s_idx: e_idx] = pred_prob_batch.cpu().numpy()
+      emb_l[s_idx: e_idx] = source_embedding.cpu().numpy()
+      h1_l[s_idx: e_idx] = h1_batch.cpu().numpy()
+      h2_l[s_idx: e_idx] = h2_batch.cpu().numpy()
 
   fpr, tpr, thresholds = roc_curve(data.labels, pred_prob)
   # auc_score = auc(fpr, tpr)
@@ -83,4 +90,4 @@ def eval_node_classification(tgn, decoder, data, edge_idxs, batch_size, n_neighb
   recall = recall_score(data.labels, pred_labels)
   ap = average_precision_score(data.labels, pred_prob)
   auc_roc = roc_auc_score(data.labels, pred_prob)
-  return (auc_roc, ap, f1, recall)
+  return (auc_roc, ap, f1, recall), emb_l, pred_prob, h1_l, h2_l

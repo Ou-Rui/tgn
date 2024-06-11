@@ -1,5 +1,5 @@
 import numpy as np
-import random
+import random, math
 import pandas as pd
 
 
@@ -15,7 +15,7 @@ class Data:
     self.n_unique_nodes = len(self.unique_nodes)
 
 
-def get_data_node_classification(dataset_name, use_validation=False):
+def get_data_node_classification(dataset_name, use_validation=False, mask=0.0):
   ### Load data and train val test split
   graph_df = pd.read_csv('./data/ml_{}.csv'.format(dataset_name))
   edge_features = np.load('./data/ml_{}.npy'.format(dataset_name))
@@ -29,7 +29,7 @@ def get_data_node_classification(dataset_name, use_validation=False):
   labels = graph_df.label.values
   timestamps = graph_df.ts.values
 
-  random.seed(2020)
+  # random.seed(2020)
 
   train_mask = timestamps <= val_time if use_validation else timestamps <= test_time
   test_mask = timestamps > test_time
@@ -39,6 +39,15 @@ def get_data_node_classification(dataset_name, use_validation=False):
 
   train_data = Data(sources[train_mask], destinations[train_mask], timestamps[train_mask],
                     edge_idxs[train_mask], labels[train_mask])
+  
+  mask_train_label_l = train_data.labels.copy()
+  if mask > 0.0:
+    num_mask = math.ceil(len(train_data.labels) * mask)
+    mask_idx = np.random.choice(len(train_data.labels), num_mask, replace=False)
+  
+    mask_train_label_l[mask_idx] = -1
+    train_data.labels = mask_train_label_l
+    # logger.info(f"mask {args.mask} done, num_mask={num_mask}")
 
   val_data = Data(sources[val_mask], destinations[val_mask], timestamps[val_mask],
                   edge_idxs[val_mask], labels[val_mask])
@@ -68,7 +77,7 @@ def get_data(dataset_name, different_new_nodes_between_val_and_test=False, rando
 
   full_data = Data(sources, destinations, timestamps, edge_idxs, labels)
 
-  random.seed(2020)
+  # random.seed(2020)
 
   node_set = set(sources) | set(destinations)
   n_total_unique_nodes = len(node_set)

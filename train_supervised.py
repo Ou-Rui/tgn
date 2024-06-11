@@ -1,3 +1,6 @@
+'''
+python train_supervised.py --use_memory --prefix tgn-attn --n_runs 10 --use_validation -d txn_filter
+'''
 import math
 import logging
 import time
@@ -115,6 +118,23 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 logger.info(args)
 
+def save_embs(epoch, emb_tuple, prob_tuple, h1_tuple, h2_tuple):
+  emb_l, prob_l, h1_l, h2_l = [], [], [], []
+  for emb_mode, prob_mode, h1_mode, h2_mode in zip(
+      emb_tuple, prob_tuple, h1_tuple, h2_tuple):
+    emb_l.extend(emb_mode)
+    prob_l.extend(prob_mode)
+    h1_l.extend(h1_mode)
+    h2_l.extend(h2_mode)
+  emb_l = np.array(emb_l)
+  prob_l = np.array(prob_l)
+  h1_l = np.array(h1_l)
+  h2_l = np.array(h2_l)
+  np.save(f"./saved_embs/tgn_{args.prefix}_{args.data}_epoch{epoch}_embs.npy", emb_l)
+  np.save(f"./saved_embs/tgn_{args.prefix}_{args.data}_epoch{epoch}_probs.npy", prob_l)
+  np.save(f"./saved_embs/tgn_{args.prefix}_{args.data}_epoch{epoch}_h1.npy", h1_l)
+  np.save(f"./saved_embs/tgn_{args.prefix}_{args.data}_epoch{epoch}_h2.npy", h2_l)
+
 full_data, node_features, edge_features, train_data, val_data, test_data = \
   get_data_node_classification(DATA, use_validation=args.use_validation)
 
@@ -222,18 +242,25 @@ for i in range(args.n_runs):
                                                                                      NUM_NEIGHBORS)
 
       labels_batch_torch = torch.from_numpy(labels_batch).float().to(device)
-      pred = decoder(source_embedding).sigmoid()
+      pred, _, _ = decoder(source_embedding)
+      pred = pred.sigmoid()
       decoder_loss = decoder_loss_criterion(pred, labels_batch_torch)
       decoder_loss.backward()
       decoder_optimizer.step()
       loss += decoder_loss.item()
     # End Batch Loop
     train_loss_l.append(loss / num_batch)
-
-    val_metric = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
-                                          n_neighbors=NUM_NEIGHBORS)
-    test_metric = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
-                                        n_neighbors=NUM_NEIGHBORS)
+    
+    # 因为要再算一遍train的内容, 所以reset memory
+    if USE_MEMORY:
+      tgn.memory.__init_memory__()
+      
+    train_metric, train_emb, train_prob, train_h1, train_h2 = eval_node_classification(
+        tgn, decoder, train_data, full_data.edge_idxs, BATCH_SIZE, n_neighbors=NUM_NEIGHBORS)
+    val_metric, val_emb, val_prob, val_h1, val_h2 = eval_node_classification(
+        tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE, n_neighbors=NUM_NEIGHBORS)
+    test_metric, test_emb, test_prob, test_h1, test_h2 = eval_node_classification(
+        tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE, n_neighbors=NUM_NEIGHBORS)
     for i in range(len(METRICS)):
       if val_metric[i] > best_val_metric[i]:
         best_val_metric[i] = val_metric[i]
@@ -243,6 +270,10 @@ for i in range(args.n_runs):
         max_test_metric[i] = test_metric[i]
     val_auc, val_ap, val_f1, val_recall = val_metric
     test_auc, test_ap, test_f1, test_recall = test_metric
+    
+    ''' save embeds '''
+    save_embs(epoch, (train_emb, val_emb, test_emb), (train_prob, val_prob, test_prob), 
+              (train_h1, val_h1, test_h1), (train_h2, val_h2, test_h2))
     
     val_auc_l.append(val_auc)
     pickle.dump({

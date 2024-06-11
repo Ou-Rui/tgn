@@ -1,6 +1,14 @@
 import numpy as np
 import torch
+import datetime, pytz
 
+
+def get_ftime():
+  time = datetime.datetime.now()
+  target_timezone = pytz.timezone('Asia/Shanghai')
+  time = time.astimezone(target_timezone)
+  formatted_time = time.strftime("%Y-%m-%d-%H-%M")
+  return formatted_time
 
 class MergeLayer(torch.nn.Module):
   def __init__(self, dim1, dim2, dim3, dim4):
@@ -30,9 +38,11 @@ class MLP(torch.nn.Module):
   def forward(self, x):
     x = self.act(self.fc_1(x))
     x = self.dropout(x)
+    h1 = x
     x = self.act(self.fc_2(x))
+    h2 = x
     x = self.dropout(x)
-    return self.fc_3(x).squeeze(dim=1)
+    return self.fc_3(x).squeeze(dim=1), h1, h2
 
 
 class EarlyStopMonitor(object):

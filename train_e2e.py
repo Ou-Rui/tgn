@@ -17,7 +17,7 @@ import torch
 import numpy as np
 
 from model.tgn import TGN
-from utils.utils import EarlyStopMonitor, get_neighbor_finder, MLP
+from utils.utils import EarlyStopMonitor, get_neighbor_finder, MLP, get_ftime
 from utils.data_processing import compute_time_statistics, get_data_node_classification
 from evaluation.evaluation import eval_node_classification
 
@@ -68,6 +68,9 @@ parser.add_argument('--use_destination_embedding_in_message', action='store_true
 parser.add_argument('--use_source_embedding_in_message', action='store_true',
                     help='Whether to use the embedding of the source node as part of the message')
 
+parser.add_argument('--mask', type=float, default=0.0, help='mask ratio of training data')
+
+
 try:
   args = parser.parse_args()
 except:
@@ -106,7 +109,8 @@ get_checkpoint_path = lambda \
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler('log/{}.log'.format(str(time.time())))
+log_name = f'{get_ftime()}-{args.prefix}-{args.data}-{args.mask}'
+fh = logging.FileHandler(f'log/{log_name}.log')
 fh.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.WARN)
@@ -118,7 +122,7 @@ logger.addHandler(ch)
 logger.info(args)
 
 full_data, node_features, edge_features, train_data, val_data, test_data = \
-  get_data_node_classification(DATA, use_validation=True)
+  get_data_node_classification(DATA, use_validation=True, mask=args.mask)
 
 max_idx = max(full_data.unique_nodes)
 
@@ -221,6 +225,11 @@ for i_run in range(args.n_runs):
 
       labels_batch_torch = torch.from_numpy(labels_batch).float().to(device)
       pred = decoder(source_embedding).sigmoid()
+      
+      if args.mask > 0.0:
+        pred = pred[labels_batch_torch > -1]
+        labels_batch_torch = labels_batch_torch[labels_batch_torch > -1]
+      
       decoder_loss = decoder_loss_criterion(pred, labels_batch_torch)
       decoder_loss.backward()
       decoder_optimizer.step()
@@ -228,10 +237,10 @@ for i_run in range(args.n_runs):
     # End Batch Loop
     train_loss_l.append(loss / num_batch)
 
-    val_metric = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
-                                          n_neighbors=NUM_NEIGHBORS)
-    test_metric = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
-                                           n_neighbors=NUM_NEIGHBORS)
+    val_metric, val_emb, val_prob = eval_node_classification(tgn, decoder, val_data, full_data.edge_idxs, BATCH_SIZE,
+                                                             n_neighbors=NUM_NEIGHBORS)
+    test_metric, test_emb, test_prob = eval_node_classification(tgn, decoder, test_data, full_data.edge_idxs, BATCH_SIZE,
+                                                                n_neighbors=NUM_NEIGHBORS)
     for i in range(len(METRICS)):
       if val_metric[i] > best_val_metric[i]:
         best_val_metric[i] = val_metric[i]
@@ -249,6 +258,8 @@ for i_run in range(args.n_runs):
       "epoch_times": [0.0],
       "new_nodes_val_aps": [],
     }, open(results_path, "wb"))
+    
+    # save_embs(epoch, (train_emb, val_emb, test_emb), (train_prob, val_prob, test_prob))
 
     logger.info(f'Epoch {epoch}: train_loss: {(loss/num_batch):.4f}, val_auc: {val_auc:.4f}, ' + \
                 f'test_auc: {test_auc:.4f}, time: {(time.time() - start_epoch):.4f}')
